@@ -1,5 +1,6 @@
 
-import copy, numpy as np
+import os, sys, copy
+import numpy as np
 import weis.inputs as inp
 from math import degrees, radians, pi, sin, cos
 from weis.aeroelasticse.FAST_reader import InputReader_OpenFAST
@@ -7,7 +8,6 @@ from weis.inputs.validation import get_geometry_schema, write_geometry_yaml, loa
 from wisdem.inputs import validate_without_defaults, write_yaml
 from ROSCO_toolbox.utilities import read_DISCON
 from weis.aeroelasticse.FileTools import remove_numpy
-import os
 
 #=========================================================================================================================
 # OTHER FUNCTIONS
@@ -31,7 +31,7 @@ def compute_relThk(x,y):
     thickness[z] = yu-camber
 
   max_thk = 2*np.round(max(abs(np.array(thickness))),2) # thickness is symmetric about the camber line
-  return max_thk
+  return max_thk.tolist()
 
 # ===============================================================================================================
 # Constants
@@ -42,23 +42,31 @@ this_dir = os.path.dirname(__file__)
 
 # OpenFAST
 fast = InputReader_OpenFAST()
-fast.FAST_InputFile = 'IEA-15-240-RWT-UMaineSemi.fst'   # FAST input file (ext=.fst)
-#fast.FAST_InputFile = 'IEA-15-240-RWT-Monopile.fst'   # FAST input file (ext=.fst)
-fast.FAST_directory = os.path.join(this_dir,'..','01_aeroelasticse/OpenFAST_models/IEA-15-240-RWT/IEA-15-240-RWT-UMaineSemi')
+fast.FAST_InputFile = 'MHK_RM1_Floating.fst'   # FAST input file (ext=.fst)
+# fast.FAST_InputFile = 'MHK_RM1_Fixed.fst'   # FAST input file (ext=.fst)
+# fast.FAST_InputFile = 'IEA-15-240-RWT-UMaineSemi.fst'   # FAST input file (ext=.fst)
+# fast.FAST_InputFile = 'IEA-15-240-RWT-Monopile.fst'   # FAST input file (ext=.fst)
+
+# fast.FAST_directory = os.path.join(this_dir,'..','01_aeroelasticse/OpenFAST_models/IEA-15-240-RWT/IEA-15-240-RWT-UMaineSemi')
+# fast.FAST_directory = '/home/nmendoza/Projects/Ct-Opt/OpenFAST/openfast/examples/IEA-15MW-RWT'   # Path to fst directory files
+fast.FAST_directory = '/home/nmendoza/Projects/Ct-Opt/OpenFAST/openfast/r-test/glue-codes/openfast/MHK_RM1_Floating' # Path to fst directory files
+
 fast.execute()
 print('successfully imported fast.fst_vt')
 
 # Read DISCON infiles
-fast.fst_vt['DISCON_in'] = read_DISCON(fast.fst_vt['ServoDyn']['DLL_InFile'])
+if bool(fast.fst_vt['ServoDyn']) and bool(fast.fst_vt['DISCON_in']):
+  fast.fst_vt['DISCON_in'] = read_DISCON(fast.fst_vt['ServoDyn']['DLL_InFile'])
 
 # WEIS
-finput        = os.path.join(this_dir,'IEA-15-floating_blank.yaml')   # blank input here
+# finput        = os.path.join(this_dir,'IEA-15-floating_blank.yaml')   # blank input here
+finput        = '/home/nmendoza/Projects/Ct-Opt/WEIS/examples/06_IEA-15-240-RWT/IEA-15-floating_blank.yaml'
 merged_schema = get_geometry_schema()
 weis_obj      = validate_without_defaults(finput, merged_schema)
 print('successfully imported blank weis dictionary')
 
 # FOR VERIFICATION ONLY
-#weis_complete = inp.load_geometry_yaml('/home/nmendoza/Projects/Ct-Opt/WEIS/examples/06_IEA-15-240-RWT/IEA-15-floating_wTMDs.yaml')
+#weis_obj_complete = inp.load_geometry_yaml('/home/nmendoza/Projects/Ct-Opt/WEIS/examples/06_IEA-15-240-RWT/IEA-15-floating_wTMDs.yaml')
 
 # =======================================================================================================================
 # Conversion from OpenFAST to WEIS (by component)
@@ -92,7 +100,10 @@ print('Converting the assembly properties to WEIS geometry schema and dictionary
 
 weis_obj['assembly']['turbine_class']     = merged_schema['properties']['assembly']['properties']['turbine_class']['default'] # NOT AVAILABLE IN OPENFAST, WEIS DEFAULT
 weis_obj['assembly']['turbulence_class']  = merged_schema['properties']['assembly']['properties']['turbulence_class']['default'] # NOT AVAILABLE IN OPENFAST, WEIS DEFAULT
-weis_obj['assembly']['rated_power']       = fast.fst_vt['DISCON_in']['VS_RtPwr']
+if bool(fast.fst_vt['ServoDyn']) and bool(fast.fst_vt['DISCON_in']):
+  weis_obj['assembly']['rated_power']     = fast.fst_vt['DISCON_in']['VS_RtPwr']
+else:
+  weis_obj['assembly']['rated_power']     = 0  # NOT AVAILABLE IN OPENFAST
 weis_obj['assembly']['lifetime']          = merged_schema['properties']['assembly']['properties']['lifetime']['default']  # NOT AVAILABLE IN OPENFAST, WEIS DEFAULT
 
 if fast.fst_vt['ElastoDyn']['GBRatio'] == 1:
@@ -125,19 +136,19 @@ for i in numAF:
     weis_obj['airfoils'][i]['coordinates']['x']           = fast.fst_vt['AeroDyn15']['af_coord'][i]['x'].tolist()
     weis_obj['airfoils'][i]['coordinates']['y']           = fast.fst_vt['AeroDyn15']['af_coord'][i]['y'].tolist()
     # properties
-    weis_obj['airfoils'][i]['name']                       = f"airfoil_{int(fast.fst_vt['AeroDynBlade']['BlAFID'][i])}"
+    weis_obj['airfoils'][i]['name']                       = str(fast.fst_vt['AeroDynBlade']['BlAFID'][i])
     weis_obj['airfoils'][i]['aerodynamic_center']         = float(fast.fst_vt['AeroDyn15']['ac'][i])
-    weis_obj['airfoils'][i]['relative_thickness']         = float(compute_relThk(weis_obj['airfoils'][i]['coordinates']['x'],weis_obj['airfoils'][i]['coordinates']['y']))
+    weis_obj['airfoils'][i]['relative_thickness']         = compute_relThk(weis_obj['airfoils'][i]['coordinates']['x'],weis_obj['airfoils'][i]['coordinates']['y'])
     # polars
     AoA = fast.fst_vt['AeroDyn15']['af_data'][i][0]['Alpha']
-    weis_obj['airfoils'][i]['polars'][0]['c_l']['grid']   = [A * pi/180 for A in AoA]
-    weis_obj['airfoils'][i]['polars'][0]['c_l']['values'] = fast.fst_vt['AeroDyn15']['af_data'][i][0]['Cl']
-    weis_obj['airfoils'][i]['polars'][0]['c_d']['grid']   = [A * pi/180 for A in AoA]
-    weis_obj['airfoils'][i]['polars'][0]['c_d']['values'] = fast.fst_vt['AeroDyn15']['af_data'][i][0]['Cd']
-    weis_obj['airfoils'][i]['polars'][0]['c_m']['grid']   = [A * pi/180 for A in AoA]
-    weis_obj['airfoils'][i]['polars'][0]['c_m']['values'] = fast.fst_vt['AeroDyn15']['af_data'][i][0]['Cm']
+    weis_obj['airfoils'][i]['polars'][0]['c_l']['grid']   = list([A * pi/180 for A in AoA])
+    weis_obj['airfoils'][i]['polars'][0]['c_l']['values'] = list(fast.fst_vt['AeroDyn15']['af_data'][i][0]['Cl'])
+    weis_obj['airfoils'][i]['polars'][0]['c_d']['grid']   = list([A * pi/180 for A in AoA])
+    weis_obj['airfoils'][i]['polars'][0]['c_d']['values'] = list(fast.fst_vt['AeroDyn15']['af_data'][i][0]['Cd'])
+    weis_obj['airfoils'][i]['polars'][0]['c_m']['grid']   = list([A * pi/180 for A in AoA])
+    weis_obj['airfoils'][i]['polars'][0]['c_m']['values'] = list(fast.fst_vt['AeroDyn15']['af_data'][i][0]['Cm'])
     # Reynolds number
-    weis_obj['airfoils'][i]['polars'][0]['re'] = fast.fst_vt['AeroDyn15']['af_data'][i][0]['Re']
+    weis_obj['airfoils'][i]['polars'][0]['re'] = float(fast.fst_vt['AeroDyn15']['af_data'][i][0]['Re'])
 
 print('Done')
 
@@ -148,7 +159,7 @@ print('Converting the blade planform properties to WEIS geometry schema and dict
 
 # Blade nodes = nondimensionalize
 blade_length = fast.fst_vt['AeroDynBlade']['BlSpn'][-1]
-BlSpn = fast.fst_vt['AeroDynBlade']['BlSpn']
+BlSpn = list(fast.fst_vt['AeroDynBlade']['BlSpn'])
 blade_fraction = [L / blade_length for L in BlSpn]
 
 # Airfoil Positions
@@ -156,21 +167,21 @@ weis_obj['components']['blade']['outer_shape_bem']['airfoil_position']['grid']  
 weis_obj['components']['blade']['outer_shape_bem']['airfoil_position']['labels']    = [f'airfoil_{int(afid)}' for afid in fast.fst_vt['AeroDynBlade']['BlAFID']]
 # Chord
 weis_obj['components']['blade']['outer_shape_bem']['chord']['grid']                 = blade_fraction
-weis_obj['components']['blade']['outer_shape_bem']['chord']['values']               = fast.fst_vt['AeroDynBlade']['BlChord']
+weis_obj['components']['blade']['outer_shape_bem']['chord']['values']               = list(fast.fst_vt['AeroDynBlade']['BlChord'])
 # Twist
 weis_obj['components']['blade']['outer_shape_bem']['twist']['grid']                 = blade_fraction
 twist = fast.fst_vt['AeroDynBlade']['BlTwist'] # convert to radians
-weis_obj['components']['blade']['outer_shape_bem']['twist']['values']               = [T * pi/180 for T in twist]
+weis_obj['components']['blade']['outer_shape_bem']['twist']['values']               = list([T * pi/180 for T in twist])
 # Pitch Axis
 weis_obj['components']['blade']['outer_shape_bem']['pitch_axis']['grid']            = blade_fraction
-weis_obj['components']['blade']['outer_shape_bem']['pitch_axis']['values']          = np.interp(blade_fraction,fast.fst_vt['ElastoDynBlade']['BlFract'],fast.fst_vt['ElastoDynBlade']['PitchAxis'])
+weis_obj['components']['blade']['outer_shape_bem']['pitch_axis']['values']          = list(np.interp(blade_fraction,fast.fst_vt['ElastoDynBlade']['BlFract'],fast.fst_vt['ElastoDynBlade']['PitchAxis']))
 # Reference Axis (normal prebend is negative in weis)
 weis_obj['components']['blade']['outer_shape_bem']['reference_axis']['x']['grid']   = blade_fraction
-weis_obj['components']['blade']['outer_shape_bem']['reference_axis']['x']['values'] = [-x for x in fast.fst_vt['AeroDynBlade']['BlCrvAC']]
+weis_obj['components']['blade']['outer_shape_bem']['reference_axis']['x']['values'] = list([-x for x in fast.fst_vt['AeroDynBlade']['BlCrvAC']])
 weis_obj['components']['blade']['outer_shape_bem']['reference_axis']['y']['grid']   = blade_fraction
-weis_obj['components']['blade']['outer_shape_bem']['reference_axis']['y']['values'] = fast.fst_vt['AeroDynBlade']['BlSwpAC']
+weis_obj['components']['blade']['outer_shape_bem']['reference_axis']['y']['values'] = list(fast.fst_vt['AeroDynBlade']['BlSwpAC'])
 weis_obj['components']['blade']['outer_shape_bem']['reference_axis']['z']['grid']   = blade_fraction
-weis_obj['components']['blade']['outer_shape_bem']['reference_axis']['z']['values'] = fast.fst_vt['AeroDynBlade']['BlSpn']
+weis_obj['components']['blade']['outer_shape_bem']['reference_axis']['z']['values'] = list(fast.fst_vt['AeroDynBlade']['BlSpn'])
 
 print('Done')
 
@@ -221,8 +232,8 @@ weis_obj['components']['nacelle']['drivetrain']['gear_ratio']                   
 weis_obj['components']['nacelle']['drivetrain']['gearbox_length_user']                     = 0
 weis_obj['components']['nacelle']['drivetrain']['gearbox_radius_user']                     = 0
 weis_obj['components']['nacelle']['drivetrain']['gearbox_mass_user']                       = 0
-weis_obj['components']['nacelle']['drivetrain']['gearbox_efficiency']                      = fast.fst_vt['ElastoDyn']['GBoxEff'] / 100
-weis_obj['components']['nacelle']['drivetrain']['damping_ratio']                           = 0 #fast.fst_vt['ElastoDyn']['DTTorDmp']???  Not quite.  I'm not sure we can get it with the OpenFAST info
+weis_obj['components']['nacelle']['drivetrain']['gearbox_efficiency']                      = fast.fst_vt['ElastoDyn']['GBoxEff']/100
+weis_obj['components']['nacelle']['drivetrain']['damping_ratio']                           = 0 #fast.fst_vt['ElastoDyn']['DTTorDmp']??? Not quite.  I'm not sure we can get it with the OpenFAST info
 weis_obj['components']['nacelle']['drivetrain']['lss_diameter']                            = []
 weis_obj['components']['nacelle']['drivetrain']['lss_wall_thickness']                      = []
 weis_obj['components']['nacelle']['drivetrain']['lss_material']                            = ''
@@ -319,33 +330,33 @@ tower_height         = fast.fst_vt['AeroDyn15']['TwrElev'][-1]
 TwrElev              = fast.fst_vt['AeroDyn15']['TwrElev']
 
 weis_obj['components']['tower']['outer_shape_bem']['reference_axis']['x']['grid']   = [H / tower_height for H in TwrElev] # non-dimensional
-weis_obj['components']['tower']['outer_shape_bem']['reference_axis']['x']['values'] = [0 for i in range(num_tower_aero_nodes)] # x is positive upwind to downwind
+weis_obj['components']['tower']['outer_shape_bem']['reference_axis']['x']['values'] = list([0 for i in range(num_tower_aero_nodes)]) # x is positive upwind to downwind
 weis_obj['components']['tower']['outer_shape_bem']['reference_axis']['y']['grid']   = [H / tower_height for H in TwrElev] # non-dimensional
-weis_obj['components']['tower']['outer_shape_bem']['reference_axis']['y']['values'] = [0 for i in range(num_tower_aero_nodes)] # y follows the right-hand-rule
+weis_obj['components']['tower']['outer_shape_bem']['reference_axis']['y']['values'] = list([0 for i in range(num_tower_aero_nodes)]) # y follows the right-hand-rule
 weis_obj['components']['tower']['outer_shape_bem']['reference_axis']['z']['grid']   = [H / tower_height for H in TwrElev] # non-dimensional
 weis_obj['components']['tower']['outer_shape_bem']['reference_axis']['z']['values'] = TwrElev # z is positive upwards
 
 weis_obj['components']['tower']['outer_shape_bem']['outer_diameter']['grid']      = [H / tower_height for H in TwrElev]
-weis_obj['components']['tower']['outer_shape_bem']['outer_diameter']['values']    = fast.fst_vt['AeroDyn15']['TwrDiam']
+weis_obj['components']['tower']['outer_shape_bem']['outer_diameter']['values']    = list(fast.fst_vt['AeroDyn15']['TwrDiam'])
 weis_obj['components']['tower']['outer_shape_bem']['drag_coefficient']['grid']    = [H / tower_height for H in TwrElev]
-weis_obj['components']['tower']['outer_shape_bem']['drag_coefficient']['values']  = fast.fst_vt['AeroDyn15']['TwrCd']
+weis_obj['components']['tower']['outer_shape_bem']['drag_coefficient']['values']  = list(fast.fst_vt['AeroDyn15']['TwrCd'])
 
 # Internal Structure
 num_tower_struct_nodes = fast.fst_vt['ElastoDynTower']['NTwInpSt']
-# weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['x']['grid']      = fast.fst_vt['ElastoDynTower']['HtFract'] # non-dimensional
-# weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['x']['values']    = [0 for j in range(num_tower_struct_nodes)] # x is positive upwind to downwind
-# weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['y']['grid']      = fast.fst_vt['ElastoDynTower']['HtFract'] # non-dimensional
-# weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['y']['values']    = [0 for j in range(num_tower_struct_nodes)] # y follows the right-hand-rule
-# weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['z']['grid']      = fast.fst_vt['ElastoDynTower']['HtFract'] # non-dimensional
-# weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['z']['values']    = [T * tower_height for T in fast.fst_vt['ElastoDynTower']['HtFract']] # z is positive upwards
+weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['x']['grid']      = list(fast.fst_vt['ElastoDynTower']['HtFract']) # non-dimensional
+weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['x']['values']    = list([0 for j in range(num_tower_struct_nodes)]) # x is positive upwind to downwind
+weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['y']['grid']      = list(fast.fst_vt['ElastoDynTower']['HtFract']) # non-dimensional
+weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['y']['values']    = list([0 for j in range(num_tower_struct_nodes)]) # y follows the right-hand-rule
+weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['z']['grid']      = list(fast.fst_vt['ElastoDynTower']['HtFract']) # non-dimensional
+weis_obj['components']['tower']['internal_structure_2d_fem']['reference_axis']['z']['values']    = list([T * tower_height for T in fast.fst_vt['ElastoDynTower']['HtFract']]) # z is positive upwards
 
 # Reference axes in blank input are linked, this could be problematic if an assumed geometry has a different reference axis
 
 weis_obj['components']['tower']['internal_structure_2d_fem']['outfitting_factor']                = fast.fst_vt['ElastoDynTower']['AdjTwMa'] # tower mass scaling factor
 
 weis_obj['components']['tower']['internal_structure_2d_fem']['layers'][0]['name']                = '' # not available at this time
-weis_obj['components']['tower']['internal_structure_2d_fem']['layers'][0]['material']            = ''  # not available at this time
-weis_obj['components']['tower']['internal_structure_2d_fem']['layers'][0]['thickness']['grid']   = fast.fst_vt['ElastoDynTower']['HtFract'] # non-dimensional
+weis_obj['components']['tower']['internal_structure_2d_fem']['layers'][0]['material']            = '' # not available at this time
+weis_obj['components']['tower']['internal_structure_2d_fem']['layers'][0]['thickness']['grid']   = list(fast.fst_vt['ElastoDynTower']['HtFract']) # non-dimensional
 weis_obj['components']['tower']['internal_structure_2d_fem']['layers'][0]['thickness']['values'] = [] # not available at this time
 
 # Elastic Properties (Multi-body)? - optional
@@ -364,23 +375,23 @@ if fast.fst_vt['Fst']['CompSub'] == 1: # if there is no mooring, then its fixed-
   #Non-dimensionalize the reference axis
   monopile_length = abs(fast.fst_vt['SubDyn']['JointZss'][0] - fast.fst_vt['SubDyn']['JointZss'][-1])
   temp = [m / monopile_length for m in fast.fst_vt['SubDyn']['JointZss']]
-  monopile_joints = [n - (fast.fst_vt['SubDyn']['JointZss'][0]/monopile_length) for n in temp]
+  monopile_joints = list([n - (fast.fst_vt['SubDyn']['JointZss'][0]/monopile_length) for n in temp])
 
   weis_obj['components']['monopile']['outer_shape_bem']['reference_axis']['x']['grid']   = monopile_joints
-  weis_obj['components']['monopile']['outer_shape_bem']['reference_axis']['x']['values'] = fast.fst_vt['SubDyn']['JointXss']
+  weis_obj['components']['monopile']['outer_shape_bem']['reference_axis']['x']['values'] = list(fast.fst_vt['SubDyn']['JointXss'])
   weis_obj['components']['monopile']['outer_shape_bem']['reference_axis']['y']['grid']   = monopile_joints
-  weis_obj['components']['monopile']['outer_shape_bem']['reference_axis']['y']['values'] = fast.fst_vt['SubDyn']['JointYss']
+  weis_obj['components']['monopile']['outer_shape_bem']['reference_axis']['y']['values'] = list(fast.fst_vt['SubDyn']['JointYss'])
   weis_obj['components']['monopile']['outer_shape_bem']['reference_axis']['z']['grid']   = monopile_joints
-  weis_obj['components']['monopile']['outer_shape_bem']['reference_axis']['z']['values'] = fast.fst_vt['SubDyn']['JointZss']
+  weis_obj['components']['monopile']['outer_shape_bem']['reference_axis']['z']['values'] = list(fast.fst_vt['SubDyn']['JointZss'])
   weis_obj['components']['monopile']['outer_shape_bem']['outer_diameter']['grid']        = monopile_joints
   weis_obj['components']['monopile']['outer_shape_bem']['drag_coefficient']['grid']      = monopile_joints
 
   weis_obj['components']['monopile']['internal_structure_2d_fem']['reference_axis']['x']['grid']   = monopile_joints
-  weis_obj['components']['monopile']['internal_structure_2d_fem']['reference_axis']['x']['values'] = fast.fst_vt['SubDyn']['JointXss']
+  weis_obj['components']['monopile']['internal_structure_2d_fem']['reference_axis']['x']['values'] = list(fast.fst_vt['SubDyn']['JointXss'])
   weis_obj['components']['monopile']['internal_structure_2d_fem']['reference_axis']['y']['grid']   = monopile_joints
-  weis_obj['components']['monopile']['internal_structure_2d_fem']['reference_axis']['y']['values'] = fast.fst_vt['SubDyn']['JointYss']
+  weis_obj['components']['monopile']['internal_structure_2d_fem']['reference_axis']['y']['values'] = list(fast.fst_vt['SubDyn']['JointYss'])
   weis_obj['components']['monopile']['internal_structure_2d_fem']['reference_axis']['z']['grid']   = monopile_joints
-  weis_obj['components']['monopile']['internal_structure_2d_fem']['reference_axis']['z']['values'] = fast.fst_vt['SubDyn']['JointZss']
+  weis_obj['components']['monopile']['internal_structure_2d_fem']['reference_axis']['z']['values'] = list(fast.fst_vt['SubDyn']['JointZss'])
   weis_obj['components']['monopile']['internal_structure_2d_fem']['outfitting_factor']             = 0
   weis_obj['components']['monopile']['internal_structure_2d_fem']['layers'][0]['name']             = '' # not available at this time
   weis_obj['components']['monopile']['internal_structure_2d_fem']['layers'][0]['material']         = '' # not available at this time
@@ -400,8 +411,8 @@ if fast.fst_vt['Fst']['CompSub'] == 1: # if there is no mooring, then its fixed-
       propset = fast.fst_vt['SubDyn']['MPropSetID2'][idx]
       idx2 = fast.fst_vt['SubDyn']['PropSetID1'].index(propset)
     
-    weis_obj['components']['monopile']['outer_shape_bem']['outer_diameter']['values'][j] = fast.fst_vt['SubDyn']['XsecD'][idx2]
-    weis_obj['components']['monopile']['internal_structure_2d_fem']['layers'][0]['thickness']['values'][j] = fast.fst_vt['SubDyn']['XsecT'][idx2]
+    weis_obj['components']['monopile']['outer_shape_bem']['outer_diameter']['values'][j] = list(fast.fst_vt['SubDyn']['XsecD'][idx2])
+    weis_obj['components']['monopile']['internal_structure_2d_fem']['layers'][0]['thickness']['values'][j] = list(fast.fst_vt['SubDyn']['XsecT'][idx2])
 
   # Get the drag coefficient from HydroDyn - DO WE WANT AXIAL OR SIMPLE COEFFICIENTS???
   weis_obj['components']['monopile']['outer_shape_bem']['drag_coefficient']['values']    = [0 for j in range(fast.fst_vt['SubDyn']['NJoints'])]
@@ -409,9 +420,9 @@ if fast.fst_vt['Fst']['CompSub'] == 1: # if there is no mooring, then its fixed-
   # Optional
   for cm in range(fast.fst_vt['SubDyn']['NCMass']): # iterate through concentrated masses aka point loads
     if fast.fst_vt['SubDyn']['CMJointID'] == fast.fst_vt['SubDyn']['RJointID']: # base joint
-      weis_obj['components']['monopile']['gravity_foundation_mass'] = fast.fst_vt['SubDyn']['JMass'][cm]
+      weis_obj['components']['monopile']['gravity_foundation_mass'] = float(fast.fst_vt['SubDyn']['JMass'][cm])
     if fast.fst_vt['SubDyn']['CMJointID'] == fast.fst_vt['SubDyn']['IJointID']: # interface joint with the transition piece
-      weis_obj['components']['monopile']['transition_piece_mass']   = fast.fst_vt['SubDyn']['JMass'][cm]
+      weis_obj['components']['monopile']['transition_piece_mass']   = float(fast.fst_vt['SubDyn']['JMass'][cm])
       #weis_obj['components']['monopile']['transition_piece_cost']   = 0 # COST NOT AVAILABLE IN OPENFAST!
   
   # weis_obj['components']['monopile']['elastic_properties_mb'] = 
@@ -435,7 +446,7 @@ if fast.fst_vt['Fst']['CompMooring'] > 0: # if there is mooring, then its floati
   max_height = max(fast.fst_vt['HydroDyn']['Jointzi'])
   for j in range(fast.fst_vt['HydroDyn']['NJoints']):
     weis_obj['components']['floating_platform']['joints'][j]['name']        = str(fast.fst_vt['HydroDyn']['JointID'][j])
-    weis_obj['components']['floating_platform']['joints'][j]['location']    = [fast.fst_vt['HydroDyn']['Jointxi'][j], fast.fst_vt['HydroDyn']['Jointyi'][j], fast.fst_vt['HydroDyn']['Jointzi'][j]]
+    weis_obj['components']['floating_platform']['joints'][j]['location']    = list([fast.fst_vt['HydroDyn']['Jointxi'][j], fast.fst_vt['HydroDyn']['Jointyi'][j], fast.fst_vt['HydroDyn']['Jointzi'][j]])
     weis_obj['components']['floating_platform']['joints'][j]['cylindrical'] = False # are cylindrical coordinates used to describe the location of this joint?
     #weis_obj['components']['floating_platform']['joints'][j]['reactions']   = [] # joint DOFs
     # does the transition between tower and platform happen at this joint?
@@ -459,7 +470,7 @@ if fast.fst_vt['Fst']['CompMooring'] > 0: # if there is mooring, then its floati
     else:
       weis_obj['components']['floating_platform']['joints'][j]['name']        = ''
       
-    weis_obj['components']['floating_platform']['joints'][j]['location']    = [fast.fst_vt['MoorDyn']['X'][k], fast.fst_vt['MoorDyn']['Y'][k], fast.fst_vt['MoorDyn']['Z'][k]]
+    weis_obj['components']['floating_platform']['joints'][j]['location']    = list([fast.fst_vt['MoorDyn']['X'][k], fast.fst_vt['MoorDyn']['Y'][k], fast.fst_vt['MoorDyn']['Z'][k]])
     weis_obj['components']['floating_platform']['joints'][j]['cylindrical'] = False # are cylindrical coordinates used to describe the location of this joint?
     #weis_obj['components']['floating_platform']['joints'][j]['reactions']   = [] # joint DOFs
     j = j + 1
@@ -479,13 +490,13 @@ if fast.fst_vt['Fst']['CompMooring'] > 0: # if there is mooring, then its floati
     idxProp = fast.fst_vt['HydroDyn']['PropSetID'].index(fast.fst_vt['HydroDyn']['MPropSetID1'][m]) # get which property set it is
 
     weis_obj['components']['floating_platform']['members'][m]['outer_shape']['shape]']                   = 'circular' # fixed for now because OpenFAST can't do polygonal members
-    weis_obj['components']['floating_platform']['members'][m]['outer_shape']['outer_diameter']['grid']   = [0, 1]
-    weis_obj['components']['floating_platform']['members'][m]['outer_shape']['outer_diameter']['values'] = [fast.fst_vt['HydroDyn']['PropD'][idxProp], fast.fst_vt['HydroDyn']['PropD'][idxProp]]
+    weis_obj['components']['floating_platform']['members'][m]['outer_shape']['outer_diameter']['grid']   = list([0, 1])
+    weis_obj['components']['floating_platform']['members'][m]['outer_shape']['outer_diameter']['values'] = list([fast.fst_vt['HydroDyn']['PropD'][idxProp], fast.fst_vt['HydroDyn']['PropD'][idxProp]])
 
     weis_obj['components']['floating_platform']['members'][m]['internal_structure']['layers'][0]['name']                = str(fast.fst_vt['HydroDyn']['MPropSetID1'][m])
     weis_obj['components']['floating_platform']['members'][m]['internal_structure']['layers'][0]['material']            = '' # NOT AVAILABLE IN OPENFAST
-    weis_obj['components']['floating_platform']['members'][m]['internal_structure']['layers'][0]['thickness']['grid']   = [0, 1]
-    weis_obj['components']['floating_platform']['members'][m]['internal_structure']['layers'][0]['thickness']['values'] = [fast.fst_vt['HydroDyn']['PropThck'][idxProp], fast.fst_vt['HydroDyn']['PropThck'][idxProp]]
+    weis_obj['components']['floating_platform']['members'][m]['internal_structure']['layers'][0]['thickness']['grid']   = list([0, 1])
+    weis_obj['components']['floating_platform']['members'][m]['internal_structure']['layers'][0]['thickness']['values'] = list([fast.fst_vt['HydroDyn']['PropThck'][idxProp], fast.fst_vt['HydroDyn']['PropThck'][idxProp]])
     
   # TODO: axial joints
   #weis_obj['components']['floating_platform']['members'][m]['axial_joints'][?]['name']  = fast.fst_vt['MoorDyn']['Point_ID'][vessel_idx(z1)]
@@ -514,12 +525,13 @@ if fast.fst_vt['Fst']['CompMooring'] > 0: # if there is mooring, use it!
   numL                = range(len(fast.fst_vt['MoorDyn']['Line_ID']))
   L_obj               = weis_obj['components']['mooring']['lines'][0] # L_obj is now a pointer to the first index of the dictionary
   weis_obj['components']['mooring']['lines'] = [copy.deepcopy(L_obj) for x in range(len(numL))] # deepcopy recursively copies the dictionary structure, creates duplicate, *ALWAYS USE DEEPCOPY*
+  node_names = [node['name'] for node in weis_obj['components']['mooring']['nodes']]
   for l in numL:
-    weis_obj['components']['mooring']['lines'][l]['name']               = fast.fst_vt['MoorDyn']['Line_ID'][l]
+    weis_obj['components']['mooring']['lines'][l]['name']               = f"line_{fast.fst_vt['MoorDyn']['Line_ID'][l]}"
     weis_obj['components']['mooring']['lines'][l]['line_type']          = fast.fst_vt['MoorDyn']['LineType'][l]
     weis_obj['components']['mooring']['lines'][l]['unstretched_length'] = fast.fst_vt['MoorDyn']['UnstrLen'][l]
-    weis_obj['components']['mooring']['lines'][l]['node1']              = fast.fst_vt['MoorDyn']['AttachA'][l]
-    weis_obj['components']['mooring']['lines'][l]['node2']              = fast.fst_vt['MoorDyn']['AttachB'][l]
+    weis_obj['components']['mooring']['lines'][l]['node1']              = node_names[fast.fst_vt['MoorDyn']['AttachA'][l]-1]
+    weis_obj['components']['mooring']['lines'][l]['node2']              = node_names[fast.fst_vt['MoorDyn']['AttachB'][l]-1]
 
   # Line Types
   numLT                = range(len(fast.fst_vt['MoorDyn']['Name']))
@@ -546,7 +558,7 @@ if fast.fst_vt['Fst']['CompMooring'] > 0: # if there is mooring, use it!
     weis_obj['components']['mooring']['nodes'][n]['node_type']   = fast.fst_vt['MoorDyn']['Attachment'][n].lower()
     weis_obj['components']['mooring']['nodes'][n]['node_mass']   = fast.fst_vt['MoorDyn']['M'][n]
     weis_obj['components']['mooring']['nodes'][n]['node_volume'] = fast.fst_vt['MoorDyn']['V'][n]
-    weis_obj['components']['mooring']['nodes'][n]['location']    = [fast.fst_vt['MoorDyn']['X'][n], fast.fst_vt['MoorDyn']['Y'][n], fast.fst_vt['MoorDyn']['Z'][n]]
+    weis_obj['components']['mooring']['nodes'][n]['location']    = list([fast.fst_vt['MoorDyn']['X'][n], fast.fst_vt['MoorDyn']['Y'][n], fast.fst_vt['MoorDyn']['Z'][n]])
     if weis_obj['components']['mooring']['nodes'][n]['node_type'] == 'fixed':
       # then also need joint, anchor_type
       weis_obj['components']['mooring']['nodes'][n]['joint'] = weis_obj['components']['floating_platform']['joints'][start_index+n]['name']
@@ -555,27 +567,15 @@ if fast.fst_vt['Fst']['CompMooring'] > 0: # if there is mooring, use it!
       # weis_obj['components']['mooring']['anchor_types'][anchor_count]['type'] = '' # must be one of lower(drag_embedment, suction, plate, micropile, sepla, custom)
       # if its a custom anchor type, then will also need mass, cost, max_lateral_load, max_vertical_load
       # if weis_obj['components']['mooring']['anchor_types'][anchor_count]['type'].lower() == 'custom':
-      #   weis_obj['components']['mooring']['anchor_types'][anchor_count]['mass'] = 0.0
-      #   weis_obj['components']['mooring']['anchor_types'][anchor_count]['cost'] = 0.0
-      #   weis_obj['components']['mooring']['anchor_types'][anchor_count]['max_lateral_load'] = 0.0
-      #   weis_obj['components']['mooring']['anchor_types'][anchor_count]['max_vertical_load'] = 0.0
+      #  weis_obj['components']['mooring']['anchor_types'][anchor_count]['mass'] = 0.0
+      #  weis_obj['components']['mooring']['anchor_types'][anchor_count]['cost'] = 0.0
+      #  weis_obj['components']['mooring']['anchor_types'][anchor_count]['max_lateral_load'] = 0.0
+      #  weis_obj['components']['mooring']['anchor_types'][anchor_count]['max_vertical_load'] = 0.0
       anchor_count = anchor_count + 1
     elif weis_obj['components']['mooring']['nodes'][n]['node_type'] == 'vessel':
       # then also need joint, fairlead_type ()
       weis_obj['components']['mooring']['nodes'][n]['joint'] = weis_obj['components']['floating_platform']['joints'][start_index+n]['name']
       weis_obj['components']['mooring']['nodes'][n]['fairlead_type'] = '' # must be one of ['rigid','actuated','ball']
-
-  # Lines
-  numL                = range(len(fast.fst_vt['MoorDyn']['Line_ID']))
-  L_obj               = weis_obj['components']['mooring']['lines'][0] # LT_obj is now a pointer to the first index of the dictionary
-  weis_obj['components']['mooring']['lines'] = [copy.deepcopy(L_obj) for x in range(len(numL))] # deepcopy recursively copies the dictionary structure, creates duplicate, *ALWAYS USE DEEPCOPY*
-  node_names = [node['name'] for node in weis_obj['components']['mooring']['nodes']]
-  for l in numL:
-    weis_obj['components']['mooring']['lines'][l]['name']               = f"line_{fast.fst_vt['MoorDyn']['Line_ID'][l]}"
-    weis_obj['components']['mooring']['lines'][l]['line_type']          = fast.fst_vt['MoorDyn']['LineType'][l]
-    weis_obj['components']['mooring']['lines'][l]['unstretched_length'] = fast.fst_vt['MoorDyn']['UnstrLen'][l]
-    weis_obj['components']['mooring']['lines'][l]['node1']              = node_names[fast.fst_vt['MoorDyn']['AttachA'][l]-1]
-    weis_obj['components']['mooring']['lines'][l]['node2']              = node_names[fast.fst_vt['MoorDyn']['AttachB'][l]-1]
 
   # Anchor Types
   weis_obj['components']['mooring']['anchor_types'][0]['name'] = ''
@@ -589,17 +589,18 @@ if fast.fst_vt['Fst']['CompMooring'] > 0: # if there is mooring, use it!
 # -----------------------------------------------------------------------------------------------------------------------
 print('Converting the control parameters to WEIS geometry schema and dictionary .........', end="", flush=True)
 
-weis_obj['control']['supervisory']['Vin']        = fast.fst_vt['DISCON_in']['PS_WindSpeeds'][0]
-weis_obj['control']['supervisory']['Vout']       = fast.fst_vt['DISCON_in']['PS_WindSpeeds'][-1]
-weis_obj['control']['supervisory']['maxTS']      = fast.fst_vt['DISCON_in']['VS_TSRopt'] * fast.fst_vt['InflowWind']['HWindSpeed']
+if bool(fast.fst_vt['ServoDyn']) and bool(fast.fst_vt['DISCON_in']):
+  weis_obj['control']['supervisory']['Vin']        = float(fast.fst_vt['DISCON_in']['PS_WindSpeeds'][0])
+  weis_obj['control']['supervisory']['Vout']       = float(fast.fst_vt['DISCON_in']['PS_WindSpeeds'][-1]
+  weis_obj['control']['supervisory']['maxTS']      = float(fast.fst_vt['DISCON_in']['VS_TSRopt'] * fast.fst_vt['InflowWind']['HWindSpeed'])
 
-weis_obj['control']['torque']['tsr']             = fast.fst_vt['DISCON_in']['VS_TSRopt'] 
-weis_obj['control']['torque']['VS_minspd']       = fast.fst_vt['DISCON_in']['VS_MinOMSpd'] # both WEIS and OpenFAST are in rad/s
-weis_obj['control']['torque']['VS_maxspd']       = fast.fst_vt['DISCON_in']['VS_RefSpd']   # both WEIS and OpenFAST are in rad/s
-weis_obj['control']['torque']['max_torque_rate'] = fast.fst_vt['DISCON_in']['VS_MaxRat']   # both WEIS and OpenFAST are in Nm/s
+  weis_obj['control']['torque']['tsr']             = float(fast.fst_vt['DISCON_in']['VS_TSRopt'])
+  weis_obj['control']['torque']['VS_minspd']       = float(fast.fst_vt['DISCON_in']['VS_MinOMSpd']) # both WEIS and OpenFAST are in rad/s
+  weis_obj['control']['torque']['VS_maxspd']       = float(fast.fst_vt['DISCON_in']['VS_RefSpd'])   # both WEIS and OpenFAST are in rad/s
+  weis_obj['control']['torque']['max_torque_rate'] = float(fast.fst_vt['DISCON_in']['VS_MaxRat'])   # both WEIS and OpenFAST are in Nm/s
 
-weis_obj['control']['pitch']['max_pitch_rate']   = fast.fst_vt['DISCON_in']['PC_MaxRat']
-weis_obj['control']['pitch']['min_pitch']        = fast.fst_vt['DISCON_in']['PC_MinPit']
+  weis_obj['control']['pitch']['max_pitch_rate']   = float(fast.fst_vt['DISCON_in']['PC_MaxRat'])
+  weis_obj['control']['pitch']['min_pitch']        = float(fast.fst_vt['DISCON_in']['PC_MinPit'])
 
 print('Done')
 
@@ -801,32 +802,32 @@ weis_obj['materials'][6]['fvf']              = 0.57
 weis_obj['materials'][6]['fwf']              = 0.7450682696347697
 weis_obj['materials'][6]['fiber_density']    = 2535.5
 weis_obj['materials'][6]['area_density_dry'] = 1.4454324430914534
-weis_obj['materials'][6]['roll_mass'] = 181.4368
+weis_obj['materials'][6]['roll_mass']        = 181.4368
 
-weis_obj['materials'][7]['name'] = 'CarbonUD'
-weis_obj['materials'][7]['description'] = ''
-weis_obj['materials'][7]['source'] = ''
-weis_obj['materials'][7]['orth'] = 1
-weis_obj['materials'][7]['rho'] = 1220.0
-weis_obj['materials'][7]['E'] = [114500000000.0, 8390000000.0, 8390000000.0]
-weis_obj['materials'][7]['G'] = [5990000000.0, 5990000000.0, 5990000000.0]
-weis_obj['materials'][7]['nu'] = [0.27, 0.27, 0.27]
-weis_obj['materials'][7]['alpha'] = []
-weis_obj['materials'][7]['Xt'] = [1546.e6, 0.0, 0.0]
-weis_obj['materials'][7]['Xc'] = [1047.e6, 0.0, 0.0]
-weis_obj['materials'][7]['Xy'] = 0
-weis_obj['materials'][7]['S'] = [0.0, 0.0, 0.0]
-weis_obj['materials'][7]['GIc'] = 0
-weis_obj['materials'][7]['GIIc'] = 0
-weis_obj['materials'][7]['alp0'] = 0
-weis_obj['materials'][7]['ply_t'] = 0.005158730158730159
-weis_obj['materials'][7]['m'] = 16.1
-weis_obj['materials'][7]['waste'] = 0.05
-weis_obj['materials'][7]['unit_cost'] = 30.0
-weis_obj['materials'][7]['component_id'] = 4
-weis_obj['materials'][7]['fvf'] = 0.1076923076923077
-weis_obj['materials'][7]['fwf'] = 0.15889029003783103
-weis_obj['materials'][7]['fiber_density'] = 1800.0
+weis_obj['materials'][7]['name']             = 'carbonUD'
+weis_obj['materials'][7]['description']      = ''
+weis_obj['materials'][7]['source']           = ''
+weis_obj['materials'][7]['orth']             = 1
+weis_obj['materials'][7]['rho']              = 1220.0
+weis_obj['materials'][7]['E']                = [114500000000.0, 8390000000.0, 8390000000.0]
+weis_obj['materials'][7]['G']                = [5990000000.0, 5990000000.0, 5990000000.0]
+weis_obj['materials'][7]['nu']               = [0.27, 0.27, 0.27]
+weis_obj['materials'][7]['alpha']            = []
+weis_obj['materials'][7]['Xt']               = [1546.e6, 0.0, 0.0]
+weis_obj['materials'][7]['Xc']               = [1047.e6, 0.0, 0.0]
+weis_obj['materials'][7]['Xy']               = 0
+weis_obj['materials'][7]['S']                = [0.0, 0.0, 0.0]
+weis_obj['materials'][7]['GIc']              = 0
+weis_obj['materials'][7]['GIIc']             = 0
+weis_obj['materials'][7]['alp0']             = 0
+weis_obj['materials'][7]['ply_t']            = 0.005158730158730159
+weis_obj['materials'][7]['m']                = 16.1
+weis_obj['materials'][7]['waste']            = 0.05
+weis_obj['materials'][7]['unit_cost']        = 30.0
+weis_obj['materials'][7]['component_id']     = 4
+weis_obj['materials'][7]['fvf']              = 0.1076923076923077
+weis_obj['materials'][7]['fwf']              = 0.15889029003783103
+weis_obj['materials'][7]['fiber_density']    = 1800.0
 weis_obj['materials'][7]['area_density_dry'] = 1.0
 weis_obj['materials'][7]['roll_mass']        = 0
 
@@ -914,7 +915,6 @@ weis_obj['materials'][10]['roll_mass']        = 0
 # Required user inputs, use defaults
 # -----------------------------------------------------------------------------------------------------------------------
 
-
 # Drivetrain
 drive_props = merged_schema['properties']['components']['properties']['nacelle']['properties']['drivetrain']['properties']
 
@@ -924,7 +924,6 @@ weis_obj['components']['nacelle']['drivetrain']['mb2Type']                      
 gen_props = merged_schema['properties']['components']['properties']['nacelle']['properties']['generator']['properties']
 
 weis_obj['components']['nacelle']['generator']['generator_type']                           = gen_props['generator_type']['default']
-
 
 # Mooring
 if fast.fst_vt['Fst']['CompMooring'] > 0: # if there is mooring, use it!
@@ -949,13 +948,14 @@ if fast.fst_vt['Fst']['CompMooring'] > 0: # if there is mooring, use it!
   weis_obj['components']['mooring']['anchor_types'][0]['type'] = 'drag_embedment' # must be one of [drag_embedment, suction, plate, micropile, sepla, Drag_Embedment, Suction, Plate, Micropile, Sepla, DRAG_EMBEDMENT, SUCTION, PLATE, MICROPILE, SEPLA, custom, Custom, CUSTOM]
 
 
-
 #=========================================================================================================================
 # OUTPUTS
 
 # Print out the final, new weis geometry yaml input file
 project_name = fast.FAST_InputFile.split('.')[0]
-print('Write the clean output geometry yaml file .........', end="", flush=True)
+fileName = fast.FAST_directory + '/' + project_name + '_CLEAN.yaml'
+print('Writing the clean output geometry yaml file .........', end="", flush=True)
+#write_yaml(weis_obj, fileName)
 weis_obj = remove_numpy(weis_obj)
 write_geometry_yaml(weis_obj, os.path.join(this_dir,project_name + '_CLEAN.yaml'))
 print('Done')
@@ -968,11 +968,9 @@ assumed_model = load_geometry_yaml(assumed_model_file)
 
 # Insert assumed variable values below here
 
-
 # Turbine System Costs
 # -----------------------------------------------------------------------------------------------------------------------
 weis_obj['costs'] = assumed_model['costs'].copy()
-
 
 # weis_obj['costs']['wake_loss_factor']                      = 0.15
 # weis_obj['costs']['fixed_charge_rate']                     = 0.056
@@ -1100,8 +1098,8 @@ weis_obj['materials'] = assumed_model['materials']
 
 # Print out the final, weis geometry yaml input file with assumptions
 print('Writing the output geometry yaml file with assumptions, approximations, and estimates .........', end="", flush=True)
+# write_yaml(weis_obj, fast.FAST_directory + '/' + project_name + '_GUESTIMATED.yaml')
 write_geometry_yaml(weis_obj, os.path.join(this_dir,project_name + '_ASSUMED.yaml'))
-
 print('Done')
 
 # Write yaml without floating platform for testing
@@ -1112,4 +1110,4 @@ write_geometry_yaml(weis_obj, os.path.join(this_dir,project_name + '_ASSUMED_NoP
 
 print('Done')
 
-exit()
+sys.exit("Successfully completed conversion")
